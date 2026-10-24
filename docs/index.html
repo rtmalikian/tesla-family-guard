@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tesla Family Guard — Live Demo (POC)</title>
+<meta name="description" content="Per-driver speed, geofence and curfew alerts + weekly report cards for family Teslas. Interactive proof-of-concept demo of tesla-family-guard.">
+<style>
+  :root { --bg:#0b0e13; --panel:#141922; --line:#232c3a; --text:#e8edf4; --muted:#93a1b5; --red:#e82127; --green:#37d67a; --amber:#f5b544; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; background:var(--bg); color:var(--text); }
+  .wrap { max-width:860px; margin:0 auto; padding:24px 16px 64px; }
+  header { text-align:center; padding:28px 0 8px; }
+  h1 { font-size:2rem; margin:0 0 8px; }
+  h1 .red { color:var(--red); }
+  .sub { color:var(--muted); max-width:640px; margin:0 auto; line-height:1.55; }
+  .badge { display:inline-block; margin-top:14px; padding:4px 12px; border:1px solid var(--line); border-radius:999px; color:var(--muted); font-size:.82rem; }
+  .badge b { color:var(--green); }
+  .panel { background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:16px; margin-top:18px; }
+  .panel h2 { margin:0 0 10px; font-size:1.1rem; }
+  .rules { display:flex; gap:12px; flex-wrap:wrap; color:var(--muted); font-size:.92rem; }
+  .rules label { display:flex; flex-direction:column; gap:4px; }
+  .rules input, .rules select { background:#0d1117; border:1px solid var(--line); border-radius:8px; color:var(--text); padding:7px 9px; font-size:.95rem; }
+  .btns { display:flex; gap:8px; flex-wrap:wrap; margin-top:12px; }
+  button { border:1px solid var(--line); background:#0d1117; color:var(--text); border-radius:999px; padding:8px 14px; cursor:pointer; font-size:.9rem; }
+  button:hover { border-color:var(--red); }
+  button.primary { background:var(--red); border-color:var(--red); color:#fff; }
+  .log { font-family:ui-monospace,Menlo,monospace; font-size:.88rem; line-height:1.7; white-space:pre-wrap; }
+  .log .alert { color:var(--amber); }
+  .log .held { color:var(--muted); }
+  .card { line-height:1.7; font-size:.97rem; }
+  .card b { color:#fff; }
+  .note { color:var(--muted); font-size:.86rem; text-align:center; margin-top:12px; line-height:1.6; }
+  a { color:#6db3ff; }
+  code { background:#0d1117; padding:1px 6px; border-radius:6px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Tesla <span class="red">Family Guard</span></h1>
+    <p class="sub">Per-driver speed, geofence and curfew alerts + a weekly report card —
+    the Ford MyKey-style safety net Tesla never shipped. This page runs the app's
+    real rules in your browser against pretend drives.</p>
+    <span class="badge">● DEMO DATA — no real cars here · <a href="https://github.com/rtmalikian/tesla-family-guard">Get the free app on GitHub</a></span>
+  </header>
+
+  <div class="panel">
+    <h2>Your ground rules</h2>
+    <div class="rules">
+      <label>Speed limit (mph)
+        <input id="limit" type="number" value="75" min="25" max="120">
+      </label>
+      <label>Curfew
+        <select id="curfew"><option value="23-5" selected>11:00 PM – 5:00 AM</option><option value="22-6">10:00 PM – 6:00 AM</option><option value="0-0">Off</option></select>
+      </label>
+      <label>Quiet hours (non-urgent alerts wait)
+        <select id="quiet"><option value="22-7" selected>10:00 PM – 7:00 AM</option><option value="21-8">9:00 PM – 8:00 AM</option></select>
+      </label>
+      <label>Alert cooldown (minutes)
+        <input id="cooldown" type="number" value="60" min="5" max="240">
+      </label>
+    </div>
+    <div class="btns">
+      <button data-drive="commute">🚗 Steady commute (50 mph, daytime, home area)</button>
+      <button data-drive="speed">⚡ Speeding stretch (98 mph, 3 samples)</button>
+      <button data-drive="curfew">🌙 Late-night drive (1:30 AM)</button>
+      <button data-drive="leave">📍 Leave the allowed area (11:30 PM)</button>
+      <button class="primary" id="morning">☀️ Morning: release held alerts + report card</button>
+      <button id="reset">↺ Reset week</button>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Alert timeline</h2>
+    <div class="log" id="log">Press a drive button to start the pretend week. Nothing here is real.</div>
+  </div>
+
+  <div class="panel">
+    <h2>Weekly report card — Model Y</h2>
+    <div class="card" id="card">No drives yet this week.</div>
+  </div>
+
+  <p class="note">How the real app differs: it reads speed and location from the official Tesla
+  Fleet API while the car is already awake (driving) — never waking it — and sends real alerts
+  to your phone free via ntfy.sh. It never commands a car. Install it from
+  <a href="https://github.com/rtmalikian/tesla-family-guard">GitHub</a> and run
+  <code>tfguard setup</code> — plain-language questions, no developer skills needed.</p>
+</div>
+<script>
+const $ = id => document.getElementById(id);
+let drives = [], alerts = [], held = [], lastAlert = {};
+
+function inWindow(mins, s, e) { return s <= e ? (mins >= s && mins < e) : (mins >= s || mins < e); }
+function fmt(h, m) { const ap = h >= 12 ? 'PM' : 'AM'; const h12 = h % 12 || 12; return h12 + ':' + String(m).padStart(2, '0') + ' ' + ap; }
+
+function rules() {
+  const limit = +$('limit').value || 75;
+  const [cs, ce] = $('curfew').value.split('-').map(Number);
+  const [qs, qe] = $('quiet').value.split('-').map(Number);
+  return { limit, curfew: cs === 0 && ce === 0 ? null : [cs * 60, ce * 60], quiet: [qs * 60, qe * 60], cooldown: +$('cooldown').value || 60 };
+}
+
+function evaluate(speed, hour, min, outside) {
+  const r = rules(), mins = hour * 60 + min, now = drives.length * 37 + mins;
+  const push = (kind, msg, safety) => {
+    if (lastAlert[kind] !== undefined && now - lastAlert[kind] < r.cooldown) return;
+    lastAlert[kind] = now;
+    const a = { kind, msg, when: fmt(hour, min), safety };
+    if (!safety && inWindow(mins, r.quiet[0], r.quiet[1])) { a.held = true; held.push(a); }
+    else alerts.push(a);
+  };
+  if (speed > r.limit) push('speeding', 'Speeding at ' + speed + ' mph (limit ' + r.limit + ' mph).', true);
+  if (r.curfew && inWindow(mins, r.curfew[0], r.curfew[1])) push('curfew', 'Driving during curfew hours.', true);
+  if (outside && drives.some(d => !d.outside)) push('geofence_exit', 'Left the allowed area while driving.', false);
+}
+
+function addDrive(speed, hour, min, outside, label) {
+  drives.push({ speed, hour, min, outside });
+  evaluate(speed, hour, min, outside);
+  render(label);
+}
+
+function render(extra) {
+  let lines = [];
+  if (extra) lines.push(extra);
+  alerts.forEach(a => lines.push('⚠ ' + a.when + ' — ALERT: ' + a.msg));
+  held.forEach(a => lines.push('… ' + a.when + ' — HELD for quiet hours: ' + a.msg));
+  $('log').innerHTML = lines.length ? lines.map(l => {
+    const cls = l.startsWith('⚠') ? 'alert' : (l.startsWith('…') ? 'held' : '');
+    return '<span class="' + cls + '">' + l.replace(/</g, '&lt;') + '</span>';
+  }).join('\n') : 'No alerts yet — a steady week so far.';
+}
+
+function report() {
+  if (!drives.length) { $('card').textContent = 'No drives yet this week.'; return; }
+  const r = rules();
+  const top = Math.max(...drives.map(d => d.speed));
+  const over = drives.filter(d => d.speed > r.limit).length;
+  const harsh = drives.filter(d => d.speed > r.limit + 20).length;
+  const exits = alerts.filter(a => a.kind === 'geofence_exit').length + held.filter(a => a.kind === 'geofence_exit').length;
+  let verdict = 'Steady week — no red flags.';
+  if (harsh) verdict = 'Needs a conversation: harsh speeding happened ' + harsh + ' time(s) this week.';
+  else if (over) verdict = 'Mostly steady — a few moments over the limit to talk through.';
+  $('card').innerHTML =
+    'Total drives: <b>' + drives.length + '</b> · Top speed: <b>' + top + ' mph</b> (limit ' + r.limit + ' mph)<br>' +
+    'Over-limit moments: <b>' + over + '</b> · Harsh events (20+ over): <b>' + harsh + '</b><br>' +
+    'Left the allowed area: <b>' + exits + '</b> time(s)<br>' + verdict;
+}
+
+document.querySelectorAll('[data-drive]').forEach(b => b.addEventListener('click', () => {
+  const k = b.dataset.drive;
+  if (k === 'commute') addDrive(50, 8, 0, false, 'Mon 8:00 AM — steady commute at 50 mph.');
+  if (k === 'speed') { addDrive(98, 18, 0, false, 'Wed 6:00 PM — 98 mph stretch (3 samples; cooldown = 1 alert).'); addDrive(98, 18, 5, false); addDrive(98, 18, 10, false); }
+  if (k === 'curfew') addDrive(40, 1, 30, false, 'Fri 1:30 AM — driving during curfew.');
+  if (k === 'leave') { addDrive(35, 23, 15, false); addDrive(38, 23, 30, true, 'Sat 11:30 PM — left the allowed area (quiet hours: held).'); }
+  report();
+}));
+$('morning').addEventListener('click', () => {
+  held.forEach(a => { a.held = false; alerts.push(a); });
+  const n = held.length; held = [];
+  render(n ? '☀️ Sunday 7:05 AM — quiet hours over: ' + n + ' held alert(s) released.' : '☀️ Sunday morning — nothing was held.');
+  report();
+});
+$('reset').addEventListener('click', () => {
+  drives = []; alerts = []; held = []; lastAlert = {};
+  $('log').textContent = 'Week reset. Press a drive button to start again.';
+  $('card').textContent = 'No drives yet this week.';
+});
+</script>
+</body>
+</html>

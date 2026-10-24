@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tesla-family-guard"
+version = "0.1.0"
+description = "Per-driver speed, geofence and curfew alerts + AI weekly report cards for family Teslas — an OpenAI-compatible API over the official Tesla Fleet API, with a pluggable LLM backend and full offline rules engine"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Raphael Malikian", email = "rtmalikian@gmail.com" }]
+keywords = ["tesla", "fleet-api", "openai-compatible", "llm", "ai", "chat", "ollama", "family-safety", "teen-driver", "parental-alerts", "ev", "model-3", "model-y"]
+dependencies = [
+    "requests>=2.31",
+    "python-dotenv>=1.0",
+]
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Topic :: Home Automation",
+    "Topic :: Security",
+]
+
+[project.scripts]
+tfguard = "tesla_family_guard.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/rtmalikian/tesla-family-guard"
+Issues = "https://github.com/rtmalikian/tesla-family-guard/issues"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
